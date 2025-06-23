@@ -1,62 +1,89 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-import boto3, os
+import boto3
+import os
 from datetime import datetime
 from gtts import gTTS
 from uuid import uuid4
-import tempfile  
+import tempfile
 from dotenv import load_dotenv
-from fastapi import Body
-from typing import Dict
-import json
-from fastapi import Request
+import logging
+from fastapi.encoders import jsonable_encoder
+from fastapi.responses import JSONResponse
+
+# Configuração básica de logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Carrega variáveis de ambiente do .env
 load_dotenv()
 
 app = FastAPI()
 
-# Inicializa o cliente S3
-s3 = boto3.client(
-    "s3",
-    aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
-    aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
-    region_name=os.getenv("AWS_REGION"),
-)
+# Configuração do cliente S3 com verificação de variáveis de ambiente
+def get_s3_client():
+    
+    return boto3.client(
+        "s3",
+        aws_access_key_id=os.getenv("AWS_ACCESS_KEY_ID"),
+        aws_secret_access_key=os.getenv("AWS_SECRET_ACCESS_KEY"),
+        region_name=os.getenv("AWS_REGION"),
+    )
 
-BUCKET_NAME = "audios-mandarim"  # Definido diretamente como seu bucket
+s3 = get_s3_client()
+BUCKET_NAME = "audios-mandarim"
 
-class TextoRequest(BaseModel):
+class AudioRequest(BaseModel):
     texto: str
 
-@app.post("/gerar-audio")
-async def gerar_audio(payload: TextoRequest):
-    try:
-        texto = payload.texto
-        print("Texto recebido:", texto)
+ 
 
-        if not texto.strip():
-            raise HTTPException(status_code=400, detail="Texto não pode ser vazio.")
+@app.post("/gerar-audio", response_class=JSONResponse)
+async def gerar_audio(payload: AudioRequest):
+    try:
+        # Validação adicional do texto
+        texto = payload.texto.strip()
+        if not texto:
+            raise HTTPException(
+                status_code=400,
+                detail="O texto não pode ser vazio ou conter apenas espaços em branco."
+            )
+        
+        logger.info(f"Processando texto: {texto[:50]}...")  # Log parcial do texto
 
         # Gera nome do arquivo
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         nome_arquivo = f"audio_{timestamp}_{uuid4().hex[:8]}.mp3"
 
-        # Cria arquivo temporário
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_file:
-            tts = gTTS(text=texto, lang='zh-cn')
-            tts.save(temp_file.name)
-            caminho_local = temp_file.name
+        # Geração do áudio com tratamento de erros específico
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_file:
+                tts = gTTS(text=texto, lang='zh-cn')
+                tts.save(temp_file.name)
+                caminho_local = temp_file.name
+        except Exception as tts_error:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Falha na geração do áudio: {str(tts_error)}"
+            )
 
-        # Faz upload para S3
-        s3.upload_file(
-            Filename=caminho_local,
-            Bucket=BUCKET_NAME,
-            Key=nome_arquivo,
-            ExtraArgs={ "ContentType": "audio/mpeg"}
-        )
-
-        # Remove o arquivo local temporário
-        os.remove(caminho_local)
+        # Upload para S3 com tratamento de erros
+        try:
+            s3.upload_file(
+                Filename=caminho_local,
+                Bucket=BUCKET_NAME,
+                Key=nome_arquivo,
+                ExtraArgs={"ContentType": "audio/mpeg"}
+            )
+        except Exception as s3_error:
+            os.remove(caminho_local)  # Limpeza do arquivo temporário
+            raise HTTPException(
+                status_code=500,
+                detail=f"Falha no upload para S3: {str(s3_error)}"
+            )
+        finally:
+            if os.path.exists(caminho_local):
+                os.remove(caminho_local)
 
         # Gera URL pública
         url = f"https://{BUCKET_NAME}.s3.amazonaws.com/{nome_arquivo}"
@@ -66,5 +93,11 @@ async def gerar_audio(payload: TextoRequest):
             "caminhoAudio": url
         }
 
+    except HTTPException:
+        raise  # Re-lança exceções HTTP já tratadas
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erro ao gerar áudio: {str(e)}")
+        logger.error(f"Erro inesperado: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Ocorreu um erro interno ao processar sua requisição"
+        )
