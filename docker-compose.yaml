@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  python-service:
+    image: meu-python-service
+    networks:
+      - mientien_network
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: ${AWS_REGION}
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+
+networks:
+  mientien_network:
+    name: mientien_network
+    external: true

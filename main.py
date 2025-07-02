@@ -58,7 +58,7 @@ async def gerar_audio(payload: AudioRequest):
         # Geração do áudio com tratamento de erros específico
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_file:
-                tts = gTTS(text=texto, lang='zh-cn')
+                tts = gTTS(text=texto, lang='zh-CN')
                 tts.save(temp_file.name)
                 caminho_local = temp_file.name
         except Exception as tts_error:

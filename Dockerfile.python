@@ -1,0 +1,29 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Instala dependências essenciais
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libssl-dev \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Instala dependências do Python
+RUN pip install --no-cache-dir \
+    fastapi \
+    uvicorn \
+    boto3 \
+    gTTS \
+    python-dotenv \
+    python-multipart \
+    pydantic
+
+# Copia o código fonte
+COPY main.py .
+
+# Expõe a porta
+EXPOSE 5000
+
+# Comando para iniciar o serviço
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]
